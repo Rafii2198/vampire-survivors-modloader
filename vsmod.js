@@ -1,6 +1,7 @@
 const fs = require("fs")
 const path = require("path")
-const esprima = require("esprima")
+const esprima = require("esprima");
+const { exit } = require("process");
 
 function get_mods() {
   return fs.readdirSync(path.join(__dirname, "mods/"), { withFileTypes: true })
@@ -16,8 +17,23 @@ function scope(maps) {
 
 function get_gi(main_path) {
   let main_contents = fs.readFileSync(path.join(main_path, "main.bundle.js"), { encoding: "utf-8" })
-  let gi_name = main_contents.match(/([$_\p{ID_Start}][$_\u200C\u200D\p{ID_Continue}]+) extends Phaser\[(?:"|')Game(?:"|')\]/u)[1]
-  return gi_name
+  let matches  = main_contents.matchAll(/(_0x[a-f0-9]+) extends Phaser\[([a-zA-Z0-9_"'()]+)\]/g)
+  let i = {}
+  for (let match of matches) {
+    if (match[2] === "'Game'") {
+      return match[1]
+    }
+    let imatch = match[2].match(/_0x[a-f0-9]+\((0x[a-f0-9]+)\)/)
+    if (imatch) {
+      i[match[1]] = imatch[1]
+    }
+  }
+  let singles = Object.entries(i).filter(([k,v]) => Object.values(i).filter(n => n === v).length === 1)
+  if (singles.length === 1) {
+    return singles[0][0]
+  }
+
+  exit()
 }
 
 function wait_for_property(obj, property, callback) {
@@ -131,6 +147,8 @@ function init(game_instance, game_config) {
 
 function extract_data_maps() {
   let text = fs.readFileSync(path.join(__dirname, "main.bundle.js"), { encoding: "utf-8" })
+  let save_data = JSON.parse(fs.readFileSync(path.join(__dirname, "SaveDataBackup.sav"), { encoding: "utf-8"}))
+  let save_data_keys = Object.keys(save_data)
   let ast = esprima.parseScript(text)
 
   let webapck_mod_lookup = ast
@@ -178,7 +196,7 @@ function extract_data_maps() {
       .filter(n => n.type === "ExpressionStatement")
       .filter(n => n.expression.type = "SequenceExpression")
       .some(n => n.expression.expressions
-        .some(n => n.left.object.type === "ThisExpression" && n.left.property.value === "checksum")
+        .some(n => n.left.object.type === "ThisExpression" && save_data_keys.includes(n.left.property.value))
       )
     )[0]
     .init
@@ -224,7 +242,7 @@ if (require.main === module) {
   let data_map_map = extract_data_maps()
   data_map_map = "{" + data_map_map.map(curr => `"${curr[0]}": ${curr[1]}`).join(",") + "}"
   bundle = bundle.replace(RegExp(`(const _0x[a-f0-9]+=${main_instance};)`), `$1try{require(__dirname + "/vsmod.js")["scope"](${data_map_map});}catch(e){console["log"](e);};`)
-  let main_game_idx = bundle.indexOf("extends Phaser['Game']")
+  let main_game_idx = bundle.indexOf(`${main_instance} extends`)
   let end_of_game_constructor = bundle.indexOf(";", main_game_idx)
   let param = bundle.slice(main_game_idx, end_of_game_constructor).match(/constructor\((_0x[a-f0-9]+)\)/)
   bundle = 
