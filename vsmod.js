@@ -34,6 +34,11 @@ function get_gi(main_path) {
     return singles[0][0];
   }
 
+  // Suport MacOS steam version
+  if (singles.length === 2 && process.platform == 'darwin') {
+    return singles[1][0];
+  }
+
   exit();
 }
 
