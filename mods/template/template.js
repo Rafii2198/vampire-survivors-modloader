@@ -39,7 +39,7 @@ class ExampleMod {
         spriteName: "CoolChar_01.png",
         walkingFrames: 2,
         description: "A modded character, without needing to share the main.bundle.js file",
-        isBought: false,
+        isBought: true,
         price: 1337,
         maxHp: 100,
         armor: 0,
