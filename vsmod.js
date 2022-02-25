@@ -3,6 +3,13 @@ const path = require("path");
 const esprima = require("esprima");
 const { exit } = require("process");
 
+function readSubDirSync(path) {
+  return fs
+    .readdirSync(path, { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => dirent.name);
+}
+
 function get_mods() {
   return fs
     .readdirSync(path.join(__dirname, "mods/"), { withFileTypes: true })
@@ -59,15 +66,335 @@ function wait_for_property(obj, property, callback) {
   }
 }
 
+const PNG = require("pngjs").PNG;
+
+Buffer.prototype.chunk = function (chunkSize) {
+  let arr = Array.from(this);
+  var R = [];
+  for (var i = 0; i < arr.length; i += chunkSize) {
+    R.push(arr.slice(i, i + chunkSize));
+  }
+  return R;
+};
+
+Array.prototype.reshape = function (rows, cols) {
+  var R = [];
+
+  for (var r = 0; r < rows; r++) {
+    var row = [];
+    for (var c = 0; c < cols; c++) {
+      var i = r * cols + c;
+      if (i < this.length) {
+        row.push(this[i]);
+      }
+    }
+    R.push(row);
+  }
+  return R;
+};
+
+Array.prototype.subsection = function (x, y, w, h) {
+  return this.slice(y, y + h).map((i) => i.slice(x, x + w));
+};
+
+Array.prototype.unshape = function () {
+  arr = [];
+  for (row of this) {
+    for (e of row) {
+      arr.push(e);
+    }
+  }
+  return arr;
+};
+
+function unpack(filename) {
+  let ijson = JSON.parse(fs.readFileSync(filename).toString()).textures[0];
+  let rawbuf = fs.readFileSync(path.join(path.dirname(filename), ijson.image));
+  let ipng = PNG.sync.read(rawbuf);
+  let pixels = ipng.data.chunk(4).reshape(ipng.height, ipng.width);
+  let frame = ijson.frames[0].frame;
+  let sprites = [];
+  for (let _frame of ijson.frames) {
+    frame = _frame.frame;
+    let pframe = pixels.subsection(frame.x, frame.y, frame.w, frame.h);
+    sprites.push({
+      filename: _frame.filename,
+      w: frame.w,
+      h: frame.h,
+      data: pframe,
+    });
+  }
+  return sprites;
+}
+
+function potpack(boxes) {
+  // calculate total box area and maximum box width
+  let area = 0;
+  let maxWidth = 0;
+
+  for (const box of boxes) {
+    area += box.w * box.h;
+    maxWidth = Math.max(maxWidth, box.w);
+  }
+
+  // sort the boxes for insertion by height, descending
+  boxes.sort((a, b) => b.h - a.h);
+
+  // aim for a squarish resulting container,
+  // slightly adjusted for sub-100% space utilization
+  const startWidth = Math.max(Math.ceil(Math.sqrt(area / 0.95)), maxWidth);
+
+  // start with a single empty space, unbounded at the bottom
+  const spaces = [{ x: 0, y: 0, w: startWidth, h: Infinity }];
+
+  let width = 0;
+  let height = 0;
+
+  for (const box of boxes) {
+    // look through spaces backwards so that we check smaller spaces first
+    for (let i = spaces.length - 1; i >= 0; i--) {
+      const space = spaces[i];
+
+      // look for empty spaces that can accommodate the current box
+      if (box.w > space.w || box.h > space.h) continue;
+
+      // found the space; add the box to its top-left corner
+      // |-------|-------|
+      // |  box  |       |
+      // |_______|       |
+      // |         space |
+      // |_______________|
+      box.x = space.x;
+      box.y = space.y;
+
+      height = Math.max(height, box.y + box.h);
+      width = Math.max(width, box.x + box.w);
+
+      if (box.w === space.w && box.h === space.h) {
+        // space matches the box exactly; remove it
+        const last = spaces.pop();
+        if (i < spaces.length) spaces[i] = last;
+      } else if (box.h === space.h) {
+        // space matches the box height; update it accordingly
+        // |-------|---------------|
+        // |  box  | updated space |
+        // |_______|_______________|
+        space.x += box.w;
+        space.w -= box.w;
+      } else if (box.w === space.w) {
+        // space matches the box width; update it accordingly
+        // |---------------|
+        // |      box      |
+        // |_______________|
+        // | updated space |
+        // |_______________|
+        space.y += box.h;
+        space.h -= box.h;
+      } else {
+        // otherwise the box splits the space into two spaces
+        // |-------|-----------|
+        // |  box  | new space |
+        // |_______|___________|
+        // | updated space     |
+        // |___________________|
+        spaces.push({
+          x: space.x + box.w,
+          y: space.y,
+          w: space.w - box.w,
+          h: box.h,
+        });
+        space.y += box.h;
+        space.h -= box.h;
+      }
+      break;
+    }
+  }
+
+  return {
+    w: width, // container width
+    h: height, // container height
+    fill: area / (width * height) || 0, // space utilization
+  };
+}
+
+function repack(sprites, filename) {
+  let { w: width, h: height } = potpack(sprites);
+  let oimg = [...Array(height)].map((e) => [...Array(width)].map((ee) => [...Array(4)].map((eee) => 0)));
+  let ojson = {
+    textures: [
+      {
+        image: filename,
+        format: "RGBA8888",
+        size: {
+          w: width,
+          h: height,
+        },
+        scale: 1,
+        frames: Array(sprites.length),
+      },
+    ],
+  };
+
+  for (let [i, sprite] of sprites.entries()) {
+    for (let iy = sprite.y; iy < sprite.y + sprite.h; iy++) {
+      for (let ix = sprite.x; ix < sprite.x + sprite.w; ix++) {
+        ojson.textures[0].frames[i] = {
+          filename: sprite.filename,
+          rotated: false,
+          trimmed: false,
+          sourceSize: {
+            w: sprite.w,
+            h: sprite.h,
+          },
+          spriteSourceSize: {
+            x: 0,
+            y: 0,
+            w: sprite.w,
+            h: sprite.h,
+          },
+          frame: {
+            x: sprite.x,
+            y: sprite.y,
+            w: sprite.w,
+            h: sprite.h,
+          },
+        };
+        oimg[iy][ix] = sprite.data[iy - sprite.y][ix - sprite.x];
+      }
+    }
+  }
+
+  return {
+    width: width,
+    height: height,
+    img: oimg,
+    json: ojson,
+  };
+}
+
+function load_sprite(filename) {
+  let rawbuf = fs.readFileSync(filename);
+  let ipng = PNG.sync.read(rawbuf);
+  let pixels = ipng.data.chunk(4).reshape(ipng.height, ipng.width);
+
+  return {
+    filename: path.basename(filename),
+    w: ipng.width,
+    h: ipng.height,
+    data: pixels,
+  };
+}
+
+function copyDirSync(src, dest, options) {
+  var srcPath = path.resolve(src);
+  var destPath = path.resolve(dest);
+  if (path.relative(srcPath, destPath).charAt(0) != ".") throw new Error("dest path must be out of src path");
+  var settings = Object.assign(Object.create(copyDirSync.options), options);
+  copyDirSync0(srcPath, destPath, settings);
+  function copyDirSync0(srcPath, destPath, settings) {
+    var files = fs.readdirSync(srcPath);
+    if (!fs.existsSync(destPath)) {
+      fs.mkdirSync(destPath);
+    } else if (!fs.lstatSync(destPath).isDirectory()) {
+      if (settings.overwrite)
+        throw new Error(`Cannot overwrite non-directory '${destPath}' with directory '${srcPath}'.`);
+      return;
+    }
+    files.forEach(function (filename) {
+      var childSrcPath = path.join(srcPath, filename);
+      var childDestPath = path.join(destPath, filename);
+      var type = fs.lstatSync(childSrcPath).isDirectory() ? "directory" : "file";
+      if (!settings.filter(childSrcPath, type)) return;
+      if (type == "directory") {
+        copyDirSync0(childSrcPath, childDestPath, settings);
+      } else {
+        fs.copyFileSync(childSrcPath, childDestPath, settings.overwrite ? 0 : fs.constants.COPYFILE_EXCL);
+        if (!settings.preserveFileDate) fs.futimesSync(childDestPath, Date.now(), Date.now());
+      }
+    });
+  }
+}
+copyDirSync.options = {
+  overwrite: true,
+  preserveFileDate: true,
+  filter: function (filepath, type) {
+    return true;
+  },
+};
+
+function sprites(modded_images_dirs) {
+  let spritesheets = fs
+    .readdirSync(path.join(__dirname, "tmp/img"))
+    .filter((a) => a.endsWith("json"))
+    .map((a) => {
+      return { image: a.replace(".json", ".png"), json: a, unpacked: a.replace(".json", "/") };
+    })
+    .map((a) => {
+      return {
+        image: path.join(__dirname, "tmp/img", a.image),
+        json: path.join(__dirname, "tmp/img", a.json),
+        type: a.json.slice(0, -5),
+      };
+    })
+    .filter((a) => fs.existsSync(a.json) && fs.existsSync(a.image));
+
+  for (let spritesheet of spritesheets) {
+    let sprites = unpack(spritesheet.json);
+    // read mod sprites
+    for (let modded_image of modded_images_dirs
+      .flat()
+      .filter((d) => path.basename(d) == spritesheet.type)
+      .map((d) => fs.readdirSync(d).map((f) => path.join(d, f)))
+      .flat()) {
+      sprites.push(load_sprite(modded_image));
+    }
+    let packed = repack(sprites, spritesheet.type + ".png");
+    let opng = new PNG({
+      width: packed.width,
+      height: packed.height,
+      colorType: 6,
+      bitDepth: 8,
+      inputHasAlpha: true,
+    });
+    opng.data = Buffer.from(packed.img.flat(4));
+    let obuf = PNG.sync.write(opng);
+    fs.writeFileSync(path.join(__dirname, "assets/img", spritesheet.type + ".png"), obuf);
+    fs.writeFileSync(
+      path.join(__dirname, "assets/img", spritesheet.type + ".json"),
+      JSON.stringify(packed.json, null, 2)
+    );
+  }
+}
+
 let gi;
 let gc;
 
 function init(game_instance, game_config) {
+  // override and copy over modded assets
+  let mods_dirs = fs.readdirSync(path.join(__dirname, "mods/"));
+  let modded_images = mods_dirs
+    .map((d) => path.join(__dirname, "mods/", d, "img"))
+    .filter((d) => fs.existsSync(d))
+    .map((d) => fs.readdirSync(d).map((i) => path.join(d, i)));
+  // backup original game images
+  if (!fs.existsSync(path.join(__dirname, "tmp/img"))) {
+    if (!fs.existsSync(path.join(__dirname, "tmp/"))) {
+      fs.mkdirSync(path.join(__dirname, "tmp/"));
+    }
+    copyDirSync(path.join(__dirname, "assets/img"), path.join(__dirname, "tmp/img"));
+  }
+  sprites(modded_images);
+
   gi = game_instance.__proto__.constructor;
   gc = game_config;
   // Construct each mod, this will set their pre and post hooks and whatever initial variables they might need
   console.log("Initializing Vampire Survivors Mod Loader");
-  let mods = get_mods().map((mod) => new mod(gi, game_config, api));
+  let mods = mods_dirs
+    .map((d) =>
+      path.join(d, fs.readdirSync(path.join(__dirname, "mods/", d)).filter((f) => f.endsWith(".js"))[0])
+    )
+    .map((f) => require(path.join(__dirname, "mods/", f)))
+    .map((mod) => new mod(gi, game_config, api));
   console.log("Active mods:", mods.map((m) => m.name).join(","));
 
   wait_for_property(game_instance, "scene.scenes.0", () => {

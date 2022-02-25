@@ -23,13 +23,7 @@ class ExampleMod {
       // Game.XXXX hooks look at the game_instance object to find the function
       "Game.Core.Player.LevelUp": this.postPlayerLevelUp,
     };
-    this.overwrite = {
-      "window.console.log": this.onConsoleLog,
-    };
-  }
-
-  onConsoleLog(self, args) {
-    // stub out function
+    this.overwrite = {};
   }
 
   // Start is called before the `pre` and `post` hooks are applied, but after, most things in the game have loaded
@@ -42,8 +36,8 @@ class ExampleMod {
         startingWeapon: "SILF",
         charName: "NYX",
         surname: "KRAGE",
-        spriteName: "Cavallo_01.png",
-        walkingFrames: 1,
+        spriteName: "CoolChar_01.png",
+        walkingFrames: 2,
         description: "A modded character, without needing to share the main.bundle.js file",
         isBought: false,
         price: 1337,
