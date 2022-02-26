@@ -260,7 +260,7 @@ function repack(sprites, filename) {
             h: sprite.source.h,
           },
           spriteSourceSize: {
-            x: sprite.souce.x,
+            x: sprite.source.x,
             y: sprite.source.y,
             w: sprite.w,
             h: sprite.h,
@@ -547,6 +547,31 @@ function init(game_instance, game_config) {
       }
     }
     wait_for_property(gi, "Core", () => {
+      // Get list of hooks
+      // Game hooks
+      let game_hooks = Object.entries(gi)
+        .filter(([k, v]) => k === "Core")
+        .map(([k, v]) => [k, [typeof v, v]])
+        .filter(([k, [t, v]]) => t === "object" && !Array.isArray(v))
+        .map(([k, [t, v]]) => [k, v])
+        .map(([k, v]) => Object.getOwnPropertyNames(v.__proto__).map((f) => `Game.Core.${k}.${f}`))
+        .flat(2);
+      // Game Core hooks
+      let game_core_hooks = Object.entries(gi._core)
+        .map(([k, v]) => [k, [typeof v, v]])
+        .filter(([k, [t, v]]) => t === "object" && !Array.isArray(v))
+        .map(([k, [t, v]]) => [k, v])
+        .map(([k, v]) => Object.getOwnPropertyNames(v.__proto__).map((f) => `Game.Core.${k}.${f}`))
+        .flat(2);
+      // Scenes hooks
+      let scene_hooks = game_instance.scene.scenes
+        .map((c, i) => [c.sys.config.key, game_config.scene[i]])
+        .map(([k, v]) => Object.getOwnPropertyNames(v.prototype).map((f) => `Scene.${k}.${f}`))
+        .flat(2);
+
+      let hooks = [...game_hooks, ...game_core_hooks, ...scene_hooks];
+      fs.writeFileSync(path.join(__dirname, "hooks.txt"), hooks.join("\n"));
+
       for (let mod of mods) {
         mod.start();
       }
