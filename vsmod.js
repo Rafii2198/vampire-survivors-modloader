@@ -42,7 +42,7 @@ function get_gi(main_path) {
   }
 
   // Suport MacOS steam version
-  if (singles.length === 2 && process.platform == 'darwin') {
+  if (singles.length === 2 && process.platform == "darwin") {
     return singles[1][0];
   }
 
@@ -121,6 +121,19 @@ function unpack(filename) {
       filename: _frame.filename,
       w: frame.w,
       h: frame.h,
+      source: _frame.trimmed
+        ? {
+            w: _frame.sourceSize.w,
+            h: _frame.sourceSize.h,
+            x: _frame.spriteSourceSize.x,
+            y: _frame.spriteSourceSize.y,
+          }
+        : {
+            w: frame.w,
+            h: frame.h,
+            x: 0,
+            y: 0,
+          },
       data: pframe,
     });
   }
@@ -243,12 +256,12 @@ function repack(sprites, filename) {
           rotated: false,
           trimmed: false,
           sourceSize: {
-            w: sprite.w,
-            h: sprite.h,
+            w: sprite.source.w,
+            h: sprite.source.h,
           },
           spriteSourceSize: {
-            x: 0,
-            y: 0,
+            x: sprite.souce.x,
+            y: sprite.source.y,
             w: sprite.w,
             h: sprite.h,
           },
@@ -281,6 +294,12 @@ function load_sprite(filename) {
     filename: path.basename(filename),
     w: ipng.width,
     h: ipng.height,
+    source: {
+      w: ipng.width,
+      h: ipng.width,
+      x: 0,
+      y: 0,
+    },
     data: pixels,
   };
 }
