@@ -121,6 +121,7 @@ function unpack(filename) {
       filename: _frame.filename,
       w: frame.w,
       h: frame.h,
+      trimmed: _frame.trimmed,
       source: _frame.trimmed
         ? {
             w: _frame.sourceSize.w,
@@ -254,7 +255,7 @@ function repack(sprites, filename) {
         ojson.textures[0].frames[i] = {
           filename: sprite.filename,
           rotated: false,
-          trimmed: false,
+          trimmed: sprite.trimmed,
           sourceSize: {
             w: sprite.source.w,
             h: sprite.source.h,
@@ -294,6 +295,7 @@ function load_sprite(filename) {
     filename: path.basename(filename),
     w: ipng.width,
     h: ipng.height,
+    trimmed: false,
     source: {
       w: ipng.width,
       h: ipng.width,
